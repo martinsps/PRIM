@@ -154,23 +154,77 @@ class PRIM:
             data = self.apply_boundary(boundary, data)
         return data
 
-    # def bottom_up_pasting(self, box, box_data, data):
-    #     # Number of observations for pasting with real variables
-    #     n_box = self.alpha * len(box_data.index)
-    #     end_pasting = False
-    #     data_enlarged = box_data
-    #     while not end_pasting:
-    #         boundary, mean_gain = self.select_best_pasting(box, box_data, data)
-    #         if mean_gain > 0:
-    #             box.add_boundary(boundary)
-    #             data_enlarged = self.apply_pasting(boundary, data_enlarged)
-    #     return box, data_enlarged
-    #
-    # def select_best_pasting(self, box, box_data, data):
-    #     pass
-    #
-    # def apply_pasting(self, boundary, data):
-    #     pass
+    def bottom_up_pasting(self, box, box_data, data):
+        # Number of observations for pasting with real variables
+        n_box = self.alpha * len(box_data.index)
+        end_pasting = False
+        data_enlarged = box_data
+        while not end_pasting:
+            boundary, mean_gain = self.select_best_pasting(box, data, box_data)
+            if mean_gain > 0:
+                # TODO: applying pasting
+                box.add_boundary(boundary)
+                data_enlarged = self.apply_pasting(boundary, data_enlarged)
+        return box, data_enlarged
+
+    def select_best_pasting(self, box, data, box_data):
+        best_mean_gain = 0
+        best_pasting = None
+        n_box = self.alpha * len(box_data.index)
+        for boundary in box.boundary_list:
+            box_aux = box
+            # For categorical, the pasting is just eliminating the condition
+            if boundary.operator == "!=":
+                box_aux.boundary_list.remove(boundary)
+                new_boundary = boundary
+            else:
+                new_boundary = self.generate_pasting_boundary(boundary, data, box_data)
+                if new_boundary.value == Boundary.all:
+                    box_aux.boundary_list.remove(boundary)
+                else:
+                    box_aux.add_boundary(new_boundary)
+            mean_gain = self.calculate_mean(self.apply_box(box_aux, data)) - self.calculate_mean(box_data)
+            if mean_gain > best_mean_gain:
+                best_mean_gain = mean_gain
+                best_pasting = new_boundary
+        return best_pasting, best_mean_gain
+
+    def generate_pasting_boundary(self, boundary, data, box_data):
+        n_box = self.alpha * len(box_data.index)
+        if boundary.operator == "<=":
+            max_value_in_box = max(box_data[boundary.variable_name])
+            ordered_values = data[data[boundary.variable_name > max_value_in_box]][boundary.variable_name].\
+                sort_values()
+            # If number of elements is higher than the ones which will
+            # be added, we just eliminate the boundary (return None)
+            if len(ordered_values) < n_box:
+                new_boundary = Boundary(boundary.variable_name, Boundary.all, boundary.operator)
+            # If not, we take the value that the n_box(th) element has
+            else:
+                limit = ordered_values[n_box]
+                new_boundary = Boundary(boundary.variable_name, limit, "<=")
+        # boundary.operator == ">="
+        else:
+            min_value_in_box = min(box_data[boundary.variable_name])
+            ordered_values = data[data[boundary.variable_name < min_value_in_box]][boundary.variable_name].\
+                sort_values(ascending=False)
+            # If number of elements is higher than the ones which will
+            # be added, we just eliminate the boundary (return None)
+            if len(ordered_values) < n_box:
+                new_boundary = Boundary(boundary.variable_name, Boundary.all, boundary.operator)
+            else:
+                limit = ordered_values[n_box]
+                new_boundary = Boundary(boundary.variable_name, limit, ">=")
+        return new_boundary
+
+    def apply_box(self, box, data):
+        data_trimmed = data
+        for boundary in box.boundary_list:
+            data_trimmed = self.apply_boundary(boundary, data_trimmed)
+        return data_trimmed
+
+    def apply_pasting(self, boundary, data):
+        pass
 
     def stop_condition_PRIM(self, data):
         """
@@ -203,12 +257,24 @@ class Box:
         if not isinstance(boundary, Boundary):
             raise TypeError('Object of type Boundary expected, \
                      however type {} was passed'.format(type(boundary)))
-        # If any boundary with the same real variable already exists, leaves
-        # the more restrictive one (the new one)
+        add = True
         for bound in self.boundary_list:
+            # 1. If any boundary with the same real variable already exists, leaves
+            # the more restrictive one (the new one)
             if boundary.variable_name == bound.variable_name and boundary.operator != "!=":
                 self.boundary_list.remove(bound)
-        self.boundary_list.append(boundary)
+                # 2. If we try to add a boundary with the value of "all", we don't add it (the one existent
+                # it is eliminated by first condition)
+                if boundary.value == Boundary.all:
+                    add = False
+            # If we add a categorical boundary with the same variable and same value, we eliminate the existent
+            # one and we don't add the new one
+            if boundary.value == bound.value and  boundary.variable_name == bound.variable_name and \
+                    boundary.operator == "!=":
+                add = False
+                self.boundary_list.remove(bound)
+        if add:
+            self.boundary_list.append(boundary)
 
 
 class Boundary:
@@ -218,6 +284,9 @@ class Boundary:
     -value: Value of the variable where the boundary is built from
     -operator: Could be '>=', '<=' or '!='
     """
+    # Defined for boundaries used to represent all values
+    all = "All"
+
     def __init__(self, variable_name, value, operator):
         self.variable_name = variable_name
         self.value = value
