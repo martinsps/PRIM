@@ -1,5 +1,5 @@
 import numpy as np
-
+from utils.utils import data_frame_difference
 
 class PRIM:
     """
@@ -21,7 +21,7 @@ class PRIM:
         self.alpha = alpha
         self.threshold_box = threshold_box
         self.threshold_global = threshold_global
-        self.global_mean = self.calculate_box_mean(Box(), input_data)
+        self.global_mean = self.calculate_mean(input_data)
 
     def execute(self):
         boxes = []
@@ -32,7 +32,9 @@ class PRIM:
             box_data = current_data
             box = Box()
             latest_box_mean = 1
+            # print(current_data)
             while not end_box:
+                # print(box_data)
                 # Generate all possible boundaries within current data
                 possible_boundaries = self.generate_boundaries(box_data)
                 # Choose the best one
@@ -41,17 +43,16 @@ class PRIM:
                 box_data = self.apply_boundary(best_boundary, box_data)
                 box.add_boundary(best_boundary)
                 # Check if mean has changed
-                mean = self.calculate_box_mean(box, box_data)
+                mean = self.calculate_mean(box_data)
                 # If not, peeling must stop
                 if latest_box_mean == mean:
                     end_box = True
                 latest_box_mean = mean
                 if self.stop_condition_box(box_data) or end_box:
                     end_box = True
-                    box, box_data = self.bottom_up_pasting(box, box_data, current_data)
-                    box.mean = self.calculate_box_mean(box, box_data)
+                    box.mean = self.calculate_mean(box_data)
                     boxes.append(box)
-                    current_data = self.remove_box(box, current_data)
+                    current_data = self.remove_box(box_data, current_data)
             if self.stop_condition_PRIM(current_data):
                 end_prim = True
         for box in boxes:
@@ -105,13 +106,8 @@ class PRIM:
         return best_boundary
 
     def get_output_mean(self, boundary, data):
-        if boundary.operator == ">=":
-            data_trimmed = data[data[boundary.variable_name] >= boundary.value]
-        elif boundary.operator == "<=":
-            data_trimmed = data[data[boundary.variable_name] <= boundary.value]
-        # elif boundary.operator == "=":
-        else:
-            data_trimmed = data[data[boundary.variable_name] != boundary.value]
+        data_trimmed = data
+        data_trimmed = self.apply_boundary(boundary, data_trimmed)
         if len(data_trimmed) == 0:
             return 0
         return len(data_trimmed[data_trimmed[self.col_output] == self.positive_class].index) / len(data_trimmed.index)
@@ -127,34 +123,54 @@ class PRIM:
             data = data[data[boundary.variable_name] != boundary.value]
         return data
 
-    def remove_box(self, box, data):
+    # def apply_boundary_inverse(self, boundary, data):
+    #     if boundary.operator == ">=":
+    #         data = data[data[boundary.variable_name] < boundary.value]
+    #     elif boundary.operator == "<=":
+    #         data = data[data[boundary.variable_name] > boundary.value]
+    #     # elif boundary.operator == "=":
+    #     else:
+    #         data = data[data[boundary.variable_name] == boundary.value]
+    #     return data
+
+    def remove_box(self, box_data, data):
+        # for boundary in box.boundary_list:
+        #     data = self.apply_boundary_inverse(boundary, data)
+        # return data
+        # Difference of data frames
+        return data_frame_difference(data, box_data)
+
+    def calculate_mean(self, box_data):
+        mean = len(box_data[box_data[self.col_output] == self.positive_class].index) / len(box_data.index)
+        return mean
+
+    def calculate_box_mean(self, box, data):
+        data_box = data
+        data_box = self.apply_box(box, data_box)
+        return self.calculate_mean(data_box)
+
+    def apply_box(self, box, data):
         for boundary in box.boundary_list:
             data = self.apply_boundary(boundary, data)
         return data
 
-    def calculate_box_mean(self, box, data):
-        data_box = data
-        data_box = self.remove_box(box, data_box)
-        mean = len(data_box[data_box[self.col_output] == self.positive_class].index) / len(data_box.index)
-        return mean
-
-    def bottom_up_pasting(self, box, box_data, data):
-        # Number of observations for pasting with real variables
-        n_box = self.alpha * len(box_data.index)
-        end_pasting = False
-        data_enlarged = box_data
-        while not end_pasting:
-            boundary, mean_gain = self.select_best_pasting(box, box_data, data)
-            if mean_gain > 0:
-                box.add_boundary(boundary)
-                data_enlarged = self.apply_pasting(boundary, data_enlarged)
-        return box, data_enlarged
-
-    def select_best_pasting(self, box, box_data, data):
-        pass
-
-    def apply_pasting(self, boundary, data):
-        pass
+    # def bottom_up_pasting(self, box, box_data, data):
+    #     # Number of observations for pasting with real variables
+    #     n_box = self.alpha * len(box_data.index)
+    #     end_pasting = False
+    #     data_enlarged = box_data
+    #     while not end_pasting:
+    #         boundary, mean_gain = self.select_best_pasting(box, box_data, data)
+    #         if mean_gain > 0:
+    #             box.add_boundary(boundary)
+    #             data_enlarged = self.apply_pasting(boundary, data_enlarged)
+    #     return box, data_enlarged
+    #
+    # def select_best_pasting(self, box, box_data, data):
+    #     pass
+    #
+    # def apply_pasting(self, boundary, data):
+    #     pass
 
     def stop_condition_PRIM(self, data):
         """
@@ -162,7 +178,7 @@ class PRIM:
         found given initial parameters and conditions.
         :return: True if stop condition has been reached, False if it has not
         """
-        mean = self.calculate_box_mean(Box(), data)
+        mean = self.calculate_mean(data)
         support = len(data.index) / self.N
         # print(mean, self.global_mean, support, self.threshold_global)
         return mean < self.global_mean or support < self.threshold_global

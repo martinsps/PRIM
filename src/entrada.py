@@ -1,5 +1,5 @@
 import pandas as pd
-from PRIM.src import errors
+import errors
 
 
 def leer_entrada(fichero):
