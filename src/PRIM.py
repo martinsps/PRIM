@@ -50,6 +50,7 @@ class PRIM:
                 if self.stop_condition_box(box_data) or end_box:
                     end_box = True
                     box, box_data = self.bottom_up_pasting(box, box_data, current_data)
+                    self.redundant_input_variables(box, box_data, current_data)
                     box.mean = self.calculate_mean(box_data)
                     boxes.append(box)
                     current_data = self.remove_box(box_data, current_data)
@@ -110,7 +111,7 @@ class PRIM:
         data_trimmed = self.apply_boundary(boundary, data_trimmed)
         if len(data_trimmed) == 0:
             return 0
-        return len(data_trimmed[data_trimmed[self.col_output] == self.positive_class].index) / len(data_trimmed.index)
+        return self.calculate_mean(data_trimmed)
 
     # TODO: apply patience (section 8.2)
     def apply_boundary(self, boundary, data):
@@ -122,16 +123,6 @@ class PRIM:
         else:
             data = data[data[boundary.variable_name] != boundary.value]
         return data
-
-    # def apply_boundary_inverse(self, boundary, data):
-    #     if boundary.operator == ">=":
-    #         data = data[data[boundary.variable_name] < boundary.value]
-    #     elif boundary.operator == "<=":
-    #         data = data[data[boundary.variable_name] > boundary.value]
-    #     # elif boundary.operator == "=":
-    #     else:
-    #         data = data[data[boundary.variable_name] == boundary.value]
-    #     return data
 
     def remove_box(self, box_data, data):
         return data_frame_difference(data, box_data)
@@ -225,6 +216,9 @@ class PRIM:
         # print(box_data)
         return box_data
 
+    def redundant_input_variables(self, box, box_data, current_data):
+        pass
+
     def stop_condition_PRIM(self, data):
         """
         Determines if PRIM has ended, that is, every subgroup has been
@@ -245,6 +239,8 @@ class PRIM:
         # Determine if box_data support is below the threshold_box
         support = len(box_data.index) / self.N
         return support <= self.threshold_box
+
+
 
 
 class Box:
