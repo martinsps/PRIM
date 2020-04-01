@@ -25,7 +25,7 @@ def ejecutar_algoritmo(fichero, columna_salida, clase_positiva):
     """
     entrada = leer_entrada(fichero)
     checkear_entrada(df=entrada, col=columna_salida, positiva=clase_positiva)
-    prim = PRIM(entrada,columna_salida,clase_positiva,alpha=0.2,threshold_box=0.6, threshold_global=0.1)
+    prim = PRIM(entrada,columna_salida,clase_positiva,alpha=0.2,threshold_box=0.2, threshold_global=0.1)
     prim.execute()
 
 

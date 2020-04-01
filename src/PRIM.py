@@ -1,5 +1,6 @@
 import numpy as np
 from utils.utils import data_frame_difference
+import pandas as pd
 
 class PRIM:
     """
@@ -32,9 +33,7 @@ class PRIM:
             box_data = current_data
             box = Box()
             latest_box_mean = 1
-            # print(current_data)
             while not end_box:
-                # print(box_data)
                 # Generate all possible boundaries within current data
                 possible_boundaries = self.generate_boundaries(box_data)
                 # Choose the best one
@@ -50,6 +49,7 @@ class PRIM:
                 latest_box_mean = mean
                 if self.stop_condition_box(box_data) or end_box:
                     end_box = True
+                    box, box_data = self.bottom_up_pasting(box, box_data, current_data)
                     box.mean = self.calculate_mean(box_data)
                     boxes.append(box)
                     current_data = self.remove_box(box_data, current_data)
@@ -134,10 +134,6 @@ class PRIM:
     #     return data
 
     def remove_box(self, box_data, data):
-        # for boundary in box.boundary_list:
-        #     data = self.apply_boundary_inverse(boundary, data)
-        # return data
-        # Difference of data frames
         return data_frame_difference(data, box_data)
 
     def calculate_mean(self, box_data):
@@ -156,23 +152,22 @@ class PRIM:
 
     def bottom_up_pasting(self, box, box_data, data):
         # Number of observations for pasting with real variables
-        n_box = self.alpha * len(box_data.index)
         end_pasting = False
         data_enlarged = box_data
         while not end_pasting:
-            boundary, mean_gain = self.select_best_pasting(box, data, box_data)
+            boundary, mean_gain = self.select_best_pasting(box, data_enlarged, data)
             if mean_gain > 0:
-                # TODO: applying pasting
                 box.add_boundary(boundary)
-                data_enlarged = self.apply_pasting(boundary, data_enlarged)
+                data_enlarged = self.apply_pasting(box, data_enlarged, data)
+            else:
+                end_pasting = True
         return box, data_enlarged
 
-    def select_best_pasting(self, box, data, box_data):
+    def select_best_pasting(self, box, box_data, data):
         best_mean_gain = 0
         best_pasting = None
-        n_box = self.alpha * len(box_data.index)
         for boundary in box.boundary_list:
-            box_aux = box
+            box_aux = Box.box_copy(box)
             # For categorical, the pasting is just eliminating the condition
             if boundary.operator == "!=":
                 box_aux.boundary_list.remove(boundary)
@@ -190,30 +185,30 @@ class PRIM:
         return best_pasting, best_mean_gain
 
     def generate_pasting_boundary(self, boundary, data, box_data):
-        n_box = self.alpha * len(box_data.index)
+        n_box = int(self.alpha * len(box_data.index))
         if boundary.operator == "<=":
             max_value_in_box = max(box_data[boundary.variable_name])
-            ordered_values = data[data[boundary.variable_name > max_value_in_box]][boundary.variable_name].\
+            ordered_values = data[data[boundary.variable_name] > max_value_in_box][boundary.variable_name].\
                 sort_values()
             # If number of elements is higher than the ones which will
-            # be added, we just eliminate the boundary (return None)
-            if len(ordered_values) < n_box:
+            # be added, we just eliminate the boundary (return "all")
+            if len(ordered_values) <= n_box:
                 new_boundary = Boundary(boundary.variable_name, Boundary.all, boundary.operator)
             # If not, we take the value that the n_box(th) element has
             else:
-                limit = ordered_values[n_box]
+                limit = ordered_values.iloc[n_box]
                 new_boundary = Boundary(boundary.variable_name, limit, "<=")
         # boundary.operator == ">="
         else:
             min_value_in_box = min(box_data[boundary.variable_name])
-            ordered_values = data[data[boundary.variable_name < min_value_in_box]][boundary.variable_name].\
+            ordered_values = data[data[boundary.variable_name] < min_value_in_box][boundary.variable_name].\
                 sort_values(ascending=False)
             # If number of elements is higher than the ones which will
-            # be added, we just eliminate the boundary (return None)
-            if len(ordered_values) < n_box:
+            # be added, we just eliminate the boundary (return "all")
+            if len(ordered_values) <= n_box:
                 new_boundary = Boundary(boundary.variable_name, Boundary.all, boundary.operator)
             else:
-                limit = ordered_values[n_box]
+                limit = ordered_values.iloc[n_box]
                 new_boundary = Boundary(boundary.variable_name, limit, ">=")
         return new_boundary
 
@@ -223,8 +218,12 @@ class PRIM:
             data_trimmed = self.apply_boundary(boundary, data_trimmed)
         return data_trimmed
 
-    def apply_pasting(self, boundary, data):
-        pass
+    def apply_pasting(self, box, box_data, data):
+        data_applied_box = self.apply_box(box, data)
+        # We add the "new" elements to box_data
+        box_data = pd.concat([box_data, data_frame_difference(data_applied_box,box_data)])
+        # print(box_data)
+        return box_data
 
     def stop_condition_PRIM(self, data):
         """
@@ -253,6 +252,13 @@ class Box:
         self.boundary_list = []
         self.mean = 0
 
+    @staticmethod
+    def box_copy(box):
+        new_box = Box()
+        for boundary in box.boundary_list:
+            new_box.add_boundary(boundary)
+        return new_box
+
     def add_boundary(self, boundary):
         if not isinstance(boundary, Boundary):
             raise TypeError('Object of type Boundary expected, \
@@ -261,7 +267,8 @@ class Box:
         for bound in self.boundary_list:
             # 1. If any boundary with the same real variable already exists, leaves
             # the more restrictive one (the new one)
-            if boundary.variable_name == bound.variable_name and boundary.operator != "!=":
+            if boundary.variable_name == bound.variable_name and boundary.operator != "!=" and \
+                    boundary.operator == bound.operator:
                 self.boundary_list.remove(bound)
                 # 2. If we try to add a boundary with the value of "all", we don't add it (the one existent
                 # it is eliminated by first condition)
@@ -269,7 +276,7 @@ class Box:
                     add = False
             # If we add a categorical boundary with the same variable and same value, we eliminate the existent
             # one and we don't add the new one
-            if boundary.value == bound.value and  boundary.variable_name == bound.variable_name and \
+            if boundary.value == bound.value and boundary.variable_name == bound.variable_name and \
                     boundary.operator == "!=":
                 add = False
                 self.boundary_list.remove(bound)
