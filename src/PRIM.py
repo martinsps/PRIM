@@ -39,6 +39,7 @@ class PRIM:
                 # Choose the best one
                 best_boundary = self.select_best_boundary(possible_boundaries, box_data)
                 # Eliminate instances of new boundary found
+                mean = self.calculate_mean(box_data)
                 box_data = self.apply_boundary(best_boundary, box_data)
                 box.add_boundary(best_boundary)
                 # Check if mean has changed
@@ -56,10 +57,12 @@ class PRIM:
                     current_data = self.remove_box(box_data, current_data)
             if self.stop_condition_PRIM(current_data):
                 end_prim = True
-        for box in boxes:
+        for i, box in enumerate(boxes):
+            print("Box",(i+1),":")
             for boundary in box.boundary_list:
                 print(boundary)
             print(box.mean)
+            print("=============")
 
     # def execute_step(self):
 
@@ -135,11 +138,6 @@ class PRIM:
         data_box = data
         data_box = self.apply_box(box, data_box)
         return self.calculate_mean(data_box)
-
-    def apply_box(self, box, data):
-        for boundary in box.boundary_list:
-            data = self.apply_boundary(boundary, data)
-        return data
 
     def bottom_up_pasting(self, box, box_data, data):
         # Number of observations for pasting with real variables
@@ -217,7 +215,24 @@ class PRIM:
         return box_data
 
     def redundant_input_variables(self, box, box_data, current_data):
-        pass
+        variable_list = []
+        variable_mean_dict = {}
+        mean = self.calculate_mean(box_data)
+        for boundary in box.boundary_list:
+            if boundary.variable_name not in variable_list:
+                variable_list.append(boundary.variable_name)
+        for variable in variable_list:
+            box_aux = Box.box_copy(box)
+            for boundary in box_aux.boundary_list:
+                if boundary.variable_name == variable:
+                    box_aux.boundary_list.remove(boundary)
+            mean_gain = self.calculate_box_mean(box_aux, current_data) - mean
+            variable_mean_dict[variable] = mean_gain
+        print("-------------------------")
+        print("Redundant variables mean gain:")
+        for var, var_mean in variable_mean_dict.items():
+            print(var, ":", var_mean)
+        print("-------------------------")
 
     def stop_condition_PRIM(self, data):
         """
@@ -229,6 +244,7 @@ class PRIM:
         support = len(data.index) / self.N
         # print(mean, self.global_mean, support, self.threshold_global)
         return mean < self.global_mean or support < self.threshold_global
+        # return support < self.threshold_global
 
     def stop_condition_box(self, box_data):
         """
@@ -239,8 +255,6 @@ class PRIM:
         # Determine if box_data support is below the threshold_box
         support = len(box_data.index) / self.N
         return support <= self.threshold_box
-
-
 
 
 class Box:
