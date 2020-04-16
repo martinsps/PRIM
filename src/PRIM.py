@@ -1,18 +1,22 @@
 import numpy as np
-from utils.utils import data_frame_difference
+from utils import data_frame_difference
 import pandas as pd
+
 
 class PRIM:
     """
     
     """
+
     def __init__(self,
                  input_data,
                  col_output,
                  positive_class,
                  alpha,
                  threshold_box,
-                 threshold_global):
+                 threshold_global,
+                 min_mean=None,
+                 ordinal_columns=None):
         # Initialize attributes
         self.input_data = input_data
         # Size of input data
@@ -22,7 +26,12 @@ class PRIM:
         self.alpha = alpha
         self.threshold_box = threshold_box
         self.threshold_global = threshold_global
-        self.global_mean = self.calculate_mean(input_data)
+        # If not min mean specified, global mean is used
+        if min_mean:
+            self.min_mean = min_mean
+        else:
+            self.min_mean = self.calculate_mean(input_data)
+        self.ordinal_columns = ordinal_columns
 
     def execute(self):
         boxes = []
@@ -36,10 +45,11 @@ class PRIM:
             while not end_box:
                 # Generate all possible boundaries within current data
                 possible_boundaries = self.generate_boundaries(box_data)
+                # for boundary in possible_boundaries:
+                #     print(boundary)
                 # Choose the best one
                 best_boundary = self.select_best_boundary(possible_boundaries, box_data)
                 # Eliminate instances of new boundary found
-                mean = self.calculate_mean(box_data)
                 box_data = self.apply_boundary(best_boundary, box_data)
                 box.add_boundary(best_boundary)
                 # Check if mean has changed
@@ -55,10 +65,10 @@ class PRIM:
                     box.mean = self.calculate_mean(box_data)
                     boxes.append(box)
                     current_data = self.remove_box(box_data, current_data)
-            if self.stop_condition_PRIM(current_data):
+            if self.stop_condition_PRIM(current_data, box_data):
                 end_prim = True
         for i, box in enumerate(boxes):
-            print("Box",(i+1),":")
+            print("Box", (i + 1), ":")
             for boundary in box.boundary_list:
                 print(boundary)
             print(box.mean)
@@ -81,14 +91,46 @@ class PRIM:
         columns.remove(self.col_output)
         for col in columns:
             col_type = data[col].dtype
-            # Numeric variables
-            if col_type == "int64" or col_type == "float64":
+            # Real variables
+            if col_type == "float64" or col_type == "float32":
                 quantile_bottom = np.quantile(data[col], self.alpha)
                 quantile_top = np.quantile(data[col], 1 - self.alpha)
                 boundary_bottom = Boundary(col, quantile_bottom, '>=')
                 boundary_top = Boundary(col, quantile_top, '<=')
                 boundaries.append(boundary_bottom)
                 boundaries.append(boundary_top)
+            # Ordinal (specified in ordinal_columns)
+            elif col in self.ordinal_columns:
+                column = data[col]
+                column = column.astype("category")
+                levels = column.unique()
+                for value in self.ordinal_columns[col]:
+                    if value in levels:
+                        min_value = value
+                        break
+                for value in reversed(self.ordinal_columns[col]):
+                    if value in levels:
+                        max_value = value
+                        break
+                # If the value is the same, it means there is only one
+                # level left of that variable -> do not add boundary
+                if min_value != max_value:
+                    boundary_bottom = Boundary(col, min_value, '!=')
+                    boundary_top = Boundary(col, max_value, '!=')
+                    boundaries.append(boundary_bottom)
+                    boundaries.append(boundary_top)
+            # Integers (treated similarly to ordinal)
+            elif col_type == "int64" or col_type == "int32":
+                min_value = min(data[col])
+                max_value = max(data[col])
+                # If the value is the same, it means there is only one
+                # level left of that variable -> do not add boundary
+                if min_value != max_value:
+                    boundary_bottom = Boundary(col, min_value, '>')
+                    boundary_top = Boundary(col, max_value, '<')
+                    boundaries.append(boundary_bottom)
+                    boundaries.append(boundary_top)
+
             # Categorical
             elif col_type == "object" or col_type == "category":
                 column = data[col].astype("category")
@@ -96,7 +138,6 @@ class PRIM:
                 for level in levels:
                     boundary_equal = Boundary(col, level, '!=')
                     boundaries.append(boundary_equal)
-            # TODO: ordinal
         return boundaries
 
     def select_best_boundary(self, boundaries, data):
@@ -116,13 +157,15 @@ class PRIM:
             return 0
         return self.calculate_mean(data_trimmed)
 
-    # TODO: apply patience (section 8.2)
     def apply_boundary(self, boundary, data):
         if boundary.operator == ">=":
             data = data[data[boundary.variable_name] >= boundary.value]
         elif boundary.operator == "<=":
             data = data[data[boundary.variable_name] <= boundary.value]
-        # elif boundary.operator == "=":
+        elif boundary.operator == ">":
+            data = data[data[boundary.variable_name] > boundary.value]
+        elif boundary.operator == "<":
+            data = data[data[boundary.variable_name] < boundary.value]
         else:
             data = data[data[boundary.variable_name] != boundary.value]
         return data
@@ -177,7 +220,7 @@ class PRIM:
         n_box = int(self.alpha * len(box_data.index))
         if boundary.operator == "<=":
             max_value_in_box = max(box_data[boundary.variable_name])
-            ordered_values = data[data[boundary.variable_name] > max_value_in_box][boundary.variable_name].\
+            ordered_values = data[data[boundary.variable_name] > max_value_in_box][boundary.variable_name]. \
                 sort_values()
             # If number of elements is higher than the ones which will
             # be added, we just eliminate the boundary (return "all")
@@ -187,10 +230,9 @@ class PRIM:
             else:
                 limit = ordered_values.iloc[n_box]
                 new_boundary = Boundary(boundary.variable_name, limit, "<=")
-        # boundary.operator == ">="
-        else:
+        elif boundary.operator == ">=":
             min_value_in_box = min(box_data[boundary.variable_name])
-            ordered_values = data[data[boundary.variable_name] < min_value_in_box][boundary.variable_name].\
+            ordered_values = data[data[boundary.variable_name] < min_value_in_box][boundary.variable_name]. \
                 sort_values(ascending=False)
             # If number of elements is higher than the ones which will
             # be added, we just eliminate the boundary (return "all")
@@ -199,6 +241,27 @@ class PRIM:
             else:
                 limit = ordered_values.iloc[n_box]
                 new_boundary = Boundary(boundary.variable_name, limit, ">=")
+        # Integer boundaries, we look for the next value to add
+        elif boundary.operator == "<":
+            ordered_values = data[data[boundary.variable_name] > boundary.value][boundary.variable_name].\
+                sort_values()
+            # It means going up a step would mean add every element
+            if len(ordered_values) == 0:
+                new_boundary = Boundary(boundary.variable_name, Boundary.all, "<")
+            else:
+                value = ordered_values.iloc[0]
+                new_boundary = Boundary(boundary.variable_name, value, "<")
+        elif boundary.operator == ">":
+            ordered_values = data[data[boundary.variable_name] < boundary.value][boundary.variable_name].\
+                sort_values(ascending=False)
+            # It means going down a step would mean add every element
+            if len(ordered_values) == 0:
+                new_boundary = Boundary(boundary.variable_name, Boundary.all, ">")
+            else:
+                value = ordered_values.iloc[0]
+                new_boundary = Boundary(boundary.variable_name, value, ">")
+        else:
+            return None
         return new_boundary
 
     def apply_box(self, box, data):
@@ -210,7 +273,7 @@ class PRIM:
     def apply_pasting(self, box, box_data, data):
         data_applied_box = self.apply_box(box, data)
         # We add the "new" elements to box_data
-        box_data = pd.concat([box_data, data_frame_difference(data_applied_box,box_data)])
+        box_data = pd.concat([box_data, data_frame_difference(data_applied_box, box_data)])
         # print(box_data)
         return box_data
 
@@ -228,22 +291,21 @@ class PRIM:
                     box_aux.boundary_list.remove(boundary)
             mean_gain = self.calculate_box_mean(box_aux, current_data) - mean
             variable_mean_dict[variable] = mean_gain
-        print("-------------------------")
-        print("Redundant variables mean gain:")
-        for var, var_mean in variable_mean_dict.items():
-            print(var, ":", var_mean)
-        print("-------------------------")
 
-    def stop_condition_PRIM(self, data):
+
+    def stop_condition_PRIM(self, data, box_data):
         """
         Determines if PRIM has ended, that is, every subgroup has been
         found given initial parameters and conditions.
+        The conditions are:
+        1. Last box's mean was lower than minimum mean allowed
+        2. The support of the remaining data is lower than threshold
         :return: True if stop condition has been reached, False if it has not
         """
-        mean = self.calculate_mean(data)
+        mean = self.calculate_mean(box_data)
         support = len(data.index) / self.N
         # print(mean, self.global_mean, support, self.threshold_global)
-        return mean < self.global_mean or support < self.threshold_global
+        return mean < self.min_mean or support < self.threshold_global
         # return support < self.threshold_global
 
     def stop_condition_box(self, box_data):

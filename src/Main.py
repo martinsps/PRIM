@@ -24,8 +24,12 @@ def ejecutar_algoritmo(fichero, columna_salida, clase_positiva):
     :return: 
     """
     entrada = leer_entrada(fichero)
-    checkear_entrada(df=entrada, col=columna_salida, positiva=clase_positiva)
-    prim = PRIM(entrada,columna_salida,clase_positiva,alpha=0.2,threshold_box=0.2, threshold_global=0.1)
+    ordinal_cols = {
+        "Pclass": [1, 2, 3]
+    }
+    checkear_entrada(df=entrada, col=columna_salida, positiva=clase_positiva, ordinal_columns=ordinal_cols)
+    prim = PRIM(entrada,columna_salida,clase_positiva,alpha=0.2,threshold_box=0.15, threshold_global=0.1,
+                ordinal_columns=ordinal_cols)
     prim.execute()
 
 
