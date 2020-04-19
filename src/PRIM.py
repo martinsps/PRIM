@@ -5,18 +5,45 @@ import pandas as pd
 
 class PRIM:
     """
-    
+    Class that represents the Patient Rule Induction Method (PRIM)
+    algorithm, used for subgroup discovery.
+    It is initialized with the following parameters:
+    1. input_data: Data frame object with the input data in which subgroups
+    are going to be discovered
+    2. col_output: Name of the column that represents the output class value
+    3. positive_class: Name of the class value chosen to be positive (the one
+    that the algorithm is going to find subgroups)
+    4. alpha: Parameter (> 0 and < 1) that sets the degree of "patience"
+    5. threshold_box: Parameter that sets the minimum size of the boxes found
+    6. threshold_global: Parameter that sets the minimum size of the data yet to
+    be analyzed
+    7. min_mean: Minimum mean (presence of positive class) for the subgroups discovered
+    8. ordinal_columns: Dictionary with the names of the ordinal columns as "keys"
+    and the ordered list of values of those columns as "values"
     """
 
     def __init__(self,
                  input_data,
                  col_output,
                  positive_class,
-                 alpha,
-                 threshold_box,
-                 threshold_global,
+                 alpha=0.1,
+                 threshold_box=0.1,
+                 threshold_global=0.2,
                  min_mean=None,
                  ordinal_columns=None):
+        """
+        Initializes the algorithm object
+        :param input_data: Data frame object with the input data in which subgroups are going to be discovered
+        :param col_output: Name of the column that represents the output class value
+        :param positive_class: Name of the class value chosen to be positive (the one that the algorithm is
+        going to find subgroups)
+        :param alpha: Parameter (> 0 and < 1) that sets the degree of "patience"
+        :param threshold_box: Parameter that sets the minimum size of the boxes found
+        :param threshold_global: Parameter that sets the minimum size of the data yet to be analyzed
+        :param min_mean: Minimum mean (presence of positive class) for the subgroups discovered
+        :param ordinal_columns: Dictionary with the names of the ordinal columns as "keys"
+        and the ordered list of values of those columns as "values"
+        """
         # Initialize attributes
         self.input_data = input_data
         # Size of input data
@@ -34,6 +61,10 @@ class PRIM:
         self.ordinal_columns = ordinal_columns
 
     def execute(self):
+        """
+        Executes the PRIM's algorithm step by step. Prints the resulting boxes at the end.
+        :return:
+        """
         boxes = []
         end_prim = False
         current_data = self.input_data
@@ -41,26 +72,12 @@ class PRIM:
             end_box = False
             box_data = current_data
             box = Box()
-            latest_box_mean = 1
             while not end_box:
-                # Generate all possible boundaries within current data
-                possible_boundaries = self.generate_boundaries(box_data)
-                # for boundary in possible_boundaries:
-                #     print(boundary)
-                # Choose the best one
-                best_boundary = self.select_best_boundary(possible_boundaries, box_data)
-                # Eliminate instances of new boundary found
-                box_data = self.apply_boundary(best_boundary, box_data)
-                box.add_boundary(best_boundary)
-                # Check if mean has changed
-                mean = self.calculate_mean(box_data)
-                # If not, peeling must stop
-                if latest_box_mean == mean:
-                    end_box = True
-                latest_box_mean = mean
-                if self.stop_condition_box(box_data) or end_box:
+                box, box_data = self.do_step_box(box, box_data)
+                if self.stop_condition_box(box_data):
                     end_box = True
                     box, box_data = self.bottom_up_pasting(box, box_data, current_data)
+                    # TODO: Ask user for decision-making on eliminating variables and apply the elimination
                     self.redundant_input_variables(box, box_data, current_data)
                     box.mean = self.calculate_mean(box_data)
                     boxes.append(box)
@@ -74,16 +91,36 @@ class PRIM:
             print(box.mean)
             print("=============")
 
-    # def execute_step(self):
+    def do_step_box(self, box, box_data):
+        """
+        Performs a step within the finding of a box in the PRIM's algorithm.
+        First, it generates all possible boundaries and the chooses the best one
+        according to the generated mean. Finally, it updates the box and box_data.
+        :param box: Current box that is being built
+        :param box_data: The data (left) in which the box is being built
+        :return: The box and box_data updated with a new boundary
+        """
+        # Generate all possible boundaries within current data
+        possible_boundaries = self.generate_boundaries(box_data)
+        # for boundary in possible_boundaries:
+        #     print(boundary)
+        # Choose the best one
+        best_boundary = self.select_best_boundary(possible_boundaries, box_data)
+        # Eliminate instances of new boundary found
+        box_data = self.apply_boundary(best_boundary, box_data)
+        box.add_boundary(best_boundary)
+        return box, box_data
 
     def generate_boundaries(self, data):
         """
         Generates all possible boundaries to choose from
         within the data, according to PRIM's algorithm.
-        Three types of columns are considered:
-        1. Numeric
-        2. Categorical
-        3. Ordinal (not yet)
+        Four types of columns are considered:
+        1. Numeric (real, not integer)
+        2. Ordinal (specified in the parameter "ordinal_columns" of the algorithm)
+        3. Integer
+        4. Categorical
+        :param data: Current data
         :return: A list of boundaries
         """
         boundaries = []
@@ -141,6 +178,14 @@ class PRIM:
         return boundaries
 
     def select_best_boundary(self, boundaries, data):
+        """
+        Method that chooses the best boundary out of a list of boundaries provided,
+        according to the output mean obtained by applying the boundary in the
+        current data. If the list is empty, it returns "None".
+        :param boundaries: List of boundaries to choose from
+        :param data: Current data
+        :return: The best boundary found in the list
+        """
         best_boundary = None
         best_mean = -1
         for boundary in boundaries:
@@ -151,6 +196,13 @@ class PRIM:
         return best_boundary
 
     def get_output_mean(self, boundary, data):
+        """
+        Method that calculates the output mean (percentage of presence
+        of the positive class) in the data after applying a boundary.
+        :param boundary: Boundary to be tested
+        :param data: Data to be tested
+        :return: Mean calculated after applying boundary to data
+        """
         data_trimmed = data
         data_trimmed = self.apply_boundary(boundary, data_trimmed)
         if len(data_trimmed) == 0:
@@ -158,6 +210,13 @@ class PRIM:
         return self.calculate_mean(data_trimmed)
 
     def apply_boundary(self, boundary, data):
+        """
+        Applies boundary passed to the data, keeping in the data only the examples
+        that satisfy the condition in the boundary
+        :param boundary:
+        :param data:
+        :return:
+        """
         if boundary.operator == ">=":
             data = data[data[boundary.variable_name] >= boundary.value]
         elif boundary.operator == "<=":
@@ -171,18 +230,48 @@ class PRIM:
         return data
 
     def remove_box(self, box_data, data):
+        """
+        Removes a box from the data, returning the difference of the data with
+        the box_data.
+        :param box_data:
+        :param data:
+        :return:
+        """
         return data_frame_difference(data, box_data)
 
     def calculate_mean(self, box_data):
+        """
+        Calculates the mean (presence of positive class) in the data.
+        :param box_data:
+        :return:
+        """
         mean = len(box_data[box_data[self.col_output] == self.positive_class].index) / len(box_data.index)
         return mean
 
     def calculate_box_mean(self, box, data):
+        """
+        Calculates the mean (presence of positive class) in the data
+        after applying the box passed as a parameter (applying each
+        of the boundaries).
+        :param box:
+        :param data:
+        :return:
+        """
         data_box = data
         data_box = self.apply_box(box, data_box)
         return self.calculate_mean(data_box)
 
     def bottom_up_pasting(self, box, box_data, data):
+        """
+        Performs the bottom-up pasting phase of PRIM's algorithm.
+        It tries to paste some values to the current boundaries of the
+        box that will increase output mean. The pasting
+        continues until no mean gain is obtained.
+        :param box: Current box (before pasting)
+        :param box_data: Current box data (before pasting)
+        :param data: Current data (also outside the box)
+        :return: Box and box data after pasting (may or may not be bigger)
+        """
         # Number of observations for pasting with real variables
         end_pasting = False
         data_enlarged = box_data
@@ -196,6 +285,16 @@ class PRIM:
         return box, data_enlarged
 
     def select_best_pasting(self, box, box_data, data):
+        """
+        Selects best pasting in the bottom-up pasting phase of
+        the PRIM's algorithm from the box's list of boundaries.
+        If no good pasting is found, then mean gain will be 0 and
+        best pasting will be "None".
+        :param box: Current box
+        :param box_data: Current box data
+        :param data: Current data (also outside the box)
+        :return: Best pasting found (new boundary) and its mean gain
+        """
         best_mean_gain = 0
         best_pasting = None
         for boundary in box.boundary_list:
@@ -217,6 +316,16 @@ class PRIM:
         return best_pasting, best_mean_gain
 
     def generate_pasting_boundary(self, boundary, data, box_data):
+        """
+        It generates a pasting boundary from an already existing numeric boundary
+        in a box by doing one of these:
+        1. Adding some examples (real variables, operators "<=" and ">=")
+        2. Moving boundary value one integer up or down (int variables, operators "<" and ">")
+        :param boundary: Existing boundary to be modified
+        :param data: Current data (also outside the box)
+        :param box_data: Current box data
+        :return: New boundary generated
+        """
         n_box = int(self.alpha * len(box_data.index))
         if boundary.operator == "<=":
             max_value_in_box = max(box_data[boundary.variable_name])
@@ -243,7 +352,7 @@ class PRIM:
                 new_boundary = Boundary(boundary.variable_name, limit, ">=")
         # Integer boundaries, we look for the next value to add
         elif boundary.operator == "<":
-            ordered_values = data[data[boundary.variable_name] > boundary.value][boundary.variable_name].\
+            ordered_values = data[data[boundary.variable_name] > boundary.value][boundary.variable_name]. \
                 sort_values()
             # It means going up a step would mean add every element
             if len(ordered_values) == 0:
@@ -252,7 +361,7 @@ class PRIM:
                 value = ordered_values.iloc[0]
                 new_boundary = Boundary(boundary.variable_name, value, "<")
         elif boundary.operator == ">":
-            ordered_values = data[data[boundary.variable_name] < boundary.value][boundary.variable_name].\
+            ordered_values = data[data[boundary.variable_name] < boundary.value][boundary.variable_name]. \
                 sort_values(ascending=False)
             # It means going down a step would mean add every element
             if len(ordered_values) == 0:
@@ -265,12 +374,27 @@ class PRIM:
         return new_boundary
 
     def apply_box(self, box, data):
+        """
+        Applies a box to the data, applying every pasting boundary
+        of its list.
+        :param box: Box to be applied
+        :param data: Data trimmed
+        :return: Data after applying every boundary of the box
+        """
         data_trimmed = data
         for boundary in box.boundary_list:
             data_trimmed = self.apply_boundary(boundary, data_trimmed)
         return data_trimmed
 
     def apply_pasting(self, box, box_data, data):
+        """
+        Applies pasting to the box data by adding the examples
+        of the whole data that remain after applying the new box.
+        :param box: New box after pasting phase
+        :param box_data: Box data (before pasting)
+        :param data: Current data (also outside the box)
+        :return: Box data enlarged by pasting
+        """
         data_applied_box = self.apply_box(box, data)
         # We add the "new" elements to box_data
         box_data = pd.concat([box_data, data_frame_difference(data_applied_box, box_data)])
@@ -278,6 +402,15 @@ class PRIM:
         return box_data
 
     def redundant_input_variables(self, box, box_data, current_data):
+        """
+        Performs the redundant input variables phase of PRIM's algorithm.
+        It calculates the gain of eliminating each variable from the box.
+        :param box: Current box
+        :param box_data: Box data
+        :param current_data: Current data (also outside the box)
+        :return: A dictionary with the variables in the box as "keys"
+        and the mean gain of eliminating each variable in "values"
+        """
         variable_list = []
         variable_mean_dict = {}
         mean = self.calculate_mean(box_data)
@@ -291,7 +424,7 @@ class PRIM:
                     box_aux.boundary_list.remove(boundary)
             mean_gain = self.calculate_box_mean(box_aux, current_data) - mean
             variable_mean_dict[variable] = mean_gain
-
+        return variable_mean_dict
 
     def stop_condition_PRIM(self, data, box_data):
         """
@@ -323,6 +456,12 @@ class Box:
     def __init__(self):
         self.boundary_list = []
         self.mean = 0
+
+    def __str__(self):
+        msg = "Box: "
+        for boundary in self.boundary_list:
+            msg += boundary.__str__() + " "
+        return msg
 
     @staticmethod
     def box_copy(box):
@@ -361,7 +500,8 @@ class Boundary:
     Tuple of:
     -variable_name: Name of the field
     -value: Value of the variable where the boundary is built from
-    -operator: Could be '>=', '<=' or '!='
+    -operator: Could be '>=', '<=' (real variables), '!=' (categorical and
+    ordinal variables) or '<' and '>' (integer variables)
     """
     # Defined for boundaries used to represent all values
     all = "All"
