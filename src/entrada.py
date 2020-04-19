@@ -13,7 +13,7 @@ def leer_entrada(fichero):
     return entrada
 
 
-def checkear_entrada(df, col, positiva):
+def checkear_entrada(df, col, positiva, ordinal_columns):
     """
     Comprueba que la columna existe en la entrada (si no salta un KeyError) y que
     la clase positiva está en la columna de salida (si no salta un UserInputError)
@@ -30,3 +30,10 @@ def checkear_entrada(df, col, positiva):
     niveles = columna.unique()
     if positiva not in niveles:
         raise errors.UserInputError("La clase positiva indicada no está en los niveles de la columna de salida.")
+    for ord in ordinal_columns.keys():
+        columna = df[ord]
+        columna = columna.astype("category")
+        niveles = columna.unique()
+        for nivel in ordinal_columns[ord]:
+            if nivel not in niveles:
+                raise errors.UserInputError(f"El nivel {nivel} de la columna {ord} es incorrecto.")
