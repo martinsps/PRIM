@@ -45,7 +45,7 @@ class PRIM:
         and the ordered list of values of those columns as "values"
         """
         # Initialize attributes
-        self.input_data = input_data
+        self.current_data = input_data
         # Size of input data
         self.N = len(input_data.index)
         self.col_output = col_output
@@ -59,32 +59,32 @@ class PRIM:
         else:
             self.min_mean = self.calculate_mean(input_data)
         self.ordinal_columns = ordinal_columns
+        # Boxes (subgroups) found
+        self.boxes = []
 
     def execute(self):
         """
         Executes the PRIM's algorithm step by step. Prints the resulting boxes at the end.
         :return:
         """
-        boxes = []
         end_prim = False
-        current_data = self.input_data
         while not end_prim:
             end_box = False
-            box_data = current_data
+            box_data = self.current_data
             box = Box()
             while not end_box:
-                box, box_data = self.do_step_box(box, box_data)
-                if self.stop_condition_box(box_data):
-                    end_box = True
-                    box, box_data = self.bottom_up_pasting(box, box_data, current_data)
-                    # TODO: Ask user for decision-making on eliminating variables and apply the elimination
-                    self.redundant_input_variables(box, box_data, current_data)
+                box, box_data, end_box = self.do_step_box(box, box_data)
+                if end_box:
+                    box, box_data = self.bottom_up_pasting(box, box_data)
+                    box, box_data, variables_eliminated = self.redundant_input_variables(box, box_data)
                     box.mean = self.calculate_mean(box_data)
-                    boxes.append(box)
-                    current_data = self.remove_box(box_data, current_data)
-            if self.stop_condition_PRIM(current_data, box_data):
+                    # Only added if it has a minimum box mean
+                    if box.mean >= self.min_mean:
+                        self.boxes.append(box)
+                        self.current_data = self.remove_box(box_data, self.current_data)
+            if self.stop_condition_PRIM(box_data):
                 end_prim = True
-        for i, box in enumerate(boxes):
+        for i, box in enumerate(self.boxes):
             print("Box", (i + 1), ":")
             for boundary in box.boundary_list:
                 print(boundary)
@@ -98,18 +98,17 @@ class PRIM:
         according to the generated mean. Finally, it updates the box and box_data.
         :param box: Current box that is being built
         :param box_data: The data (left) in which the box is being built
-        :return: The box and box_data updated with a new boundary
+        :return: The box and box_data updated with a new boundary and a boolean
+        that indicates if the end condition for the box has been reached
         """
         # Generate all possible boundaries within current data
         possible_boundaries = self.generate_boundaries(box_data)
-        # for boundary in possible_boundaries:
-        #     print(boundary)
         # Choose the best one
         best_boundary = self.select_best_boundary(possible_boundaries, box_data)
         # Eliminate instances of new boundary found
         box_data = self.apply_boundary(best_boundary, box_data)
         box.add_boundary(best_boundary)
-        return box, box_data
+        return box, box_data, self.stop_condition_box(box_data)
 
     def generate_boundaries(self, data):
         """
@@ -141,6 +140,7 @@ class PRIM:
                 column = data[col]
                 column = column.astype("category")
                 levels = column.unique()
+                min_value, max_value = 0, 0
                 for value in self.ordinal_columns[col]:
                     if value in levels:
                         min_value = value
@@ -261,7 +261,7 @@ class PRIM:
         data_box = self.apply_box(box, data_box)
         return self.calculate_mean(data_box)
 
-    def bottom_up_pasting(self, box, box_data, data):
+    def bottom_up_pasting(self, box, box_data):
         """
         Performs the bottom-up pasting phase of PRIM's algorithm.
         It tries to paste some values to the current boundaries of the
@@ -276,10 +276,10 @@ class PRIM:
         end_pasting = False
         data_enlarged = box_data
         while not end_pasting:
-            boundary, mean_gain = self.select_best_pasting(box, data_enlarged, data)
+            boundary, mean_gain = self.select_best_pasting(box, data_enlarged, self.current_data)
             if mean_gain > 0:
                 box.add_boundary(boundary)
-                data_enlarged = self.apply_pasting(box, data_enlarged, data)
+                data_enlarged = self.apply_pasting(box, data_enlarged, self.current_data)
             else:
                 end_pasting = True
         return box, data_enlarged
@@ -398,35 +398,56 @@ class PRIM:
         data_applied_box = self.apply_box(box, data)
         # We add the "new" elements to box_data
         box_data = pd.concat([box_data, data_frame_difference(data_applied_box, box_data)])
-        # print(box_data)
         return box_data
 
-    def redundant_input_variables(self, box, box_data, current_data):
+    def redundant_input_variables(self, box, box_data):
         """
         Performs the redundant input variables phase of PRIM's algorithm.
-        It calculates the gain of eliminating each variable from the box.
+        It calculates the gain of eliminating each variable from the box and
+        if one of them is positive, it eliminates the variable from the box and
+        executes the pasting of previously eliminated elements. This process is
+        repeated until one variable is left in the box or no mean gain is obtained
+        from eliminating a new variable.
         :param box: Current box
         :param box_data: Box data
-        :param current_data: Current data (also outside the box)
-        :return: A dictionary with the variables in the box as "keys"
-        and the mean gain of eliminating each variable in "values"
+        :return The new box and box_data after the process of redundant input
+        variable elimination and a list with the variables eliminated in order
         """
-        variable_list = []
-        variable_mean_dict = {}
-        mean = self.calculate_mean(box_data)
-        for boundary in box.boundary_list:
-            if boundary.variable_name not in variable_list:
-                variable_list.append(boundary.variable_name)
-        for variable in variable_list:
-            box_aux = Box.box_copy(box)
-            for boundary in box_aux.boundary_list:
-                if boundary.variable_name == variable:
-                    box_aux.boundary_list.remove(boundary)
-            mean_gain = self.calculate_box_mean(box_aux, current_data) - mean
-            variable_mean_dict[variable] = mean_gain
-        return variable_mean_dict
+        variables_eliminated = []
+        end = False
+        while not end:
+            mean = self.calculate_mean(box_data)
+            best_mean_gain = 0
+            variable_best_mean_gain = ""
+            box_best_mean_gain = {}
+            variable_list = []
+            for boundary in box.boundary_list:
+                if boundary.variable_name not in variable_list:
+                    variable_list.append(boundary.variable_name)
+            # If there is only one variable left, it exits
+            if len(variable_list) == 1:
+                end = True
+            else:
+                for variable in variable_list:
+                    box_aux = Box.box_copy(box)
+                    for boundary in box_aux.boundary_list:
+                        if boundary.variable_name == variable:
+                            box_aux.boundary_list.remove(boundary)
+                    mean_gain = self.calculate_box_mean(box_aux, self.current_data) - mean
+                    if mean_gain > best_mean_gain:
+                        best_mean_gain = mean_gain
+                        variable_best_mean_gain = variable
+                        box_best_mean_gain = box_aux
+                if best_mean_gain > 0:
+                    # Eliminate the variable applying pasting with box
+                    box_data = self.apply_pasting(box_best_mean_gain, box_data, self.current_data)
+                    box = box_best_mean_gain
+                    variables_eliminated.append(variable_best_mean_gain)
+                else:
+                    end = True
+        return box, box_data, variables_eliminated
 
-    def stop_condition_PRIM(self, data, box_data):
+    def stop_condition_PRIM(self,box_data):
         """
         Determines if PRIM has ended, that is, every subgroup has been
         found given initial parameters and conditions.
@@ -436,10 +457,8 @@ class PRIM:
         :return: True if stop condition has been reached, False if it has not
         """
         mean = self.calculate_mean(box_data)
-        support = len(data.index) / self.N
-        # print(mean, self.global_mean, support, self.threshold_global)
+        support = len(self.current_data.index) / self.N
         return mean < self.min_mean or support < self.threshold_global
-        # return support < self.threshold_global
 
     def stop_condition_box(self, box_data):
         """
