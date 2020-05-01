@@ -477,10 +477,10 @@ class Box:
         self.mean = 0
 
     def __str__(self):
-        msg = "Box: "
-        for boundary in self.boundary_list:
-            msg += boundary.__str__() + " "
-        return msg
+        msg = ""
+        for ant in self.boundary_list:
+            msg += f"{ant} AND "
+        return msg[:-4]
 
     @staticmethod
     def box_copy(box):
@@ -531,4 +531,4 @@ class Boundary:
         self.operator = operator
 
     def __str__(self):
-        return "Boundary: %s %s %s" % (self.variable_name, self.operator, str(self.value))
+        return "%s %s %s" % (self.variable_name, self.operator, str(self.value))
