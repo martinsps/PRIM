@@ -269,7 +269,6 @@ class PRIM:
         continues until no mean gain is obtained.
         :param box: Current box (before pasting)
         :param box_data: Current box data (before pasting)
-        :param data: Current data (also outside the box)
         :return: Box and box data after pasting (may or may not be bigger)
         """
         # Number of observations for pasting with real variables
@@ -447,7 +446,7 @@ class PRIM:
                     end = True
         return box, box_data, variables_eliminated
 
-    def stop_condition_PRIM(self,box_data):
+    def stop_condition_PRIM(self, box_data):
         """
         Determines if PRIM has ended, that is, every subgroup has been
         found given initial parameters and conditions.
